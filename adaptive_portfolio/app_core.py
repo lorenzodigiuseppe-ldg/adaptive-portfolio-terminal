@@ -298,3 +298,44 @@ def settings_dict(*objs):
     for o in objs:
         d.update(asdict(o))
     return d
+
+
+# ----------------------------------------------------------------------------- daily P&L
+def day_breakdown(bt: Backtester, res: dict, date) -> dict:
+    """Return of a strategy on one trading day, decomposed into each ETF's contribution.
+
+    Weights at the open of the day are the rebalance targets drifted with prices since the
+    last rebalance, so  sum(weight_i * etf_return_i)  equals the day's gross return exactly.
+    """
+    idx = bt.returns.index
+    first = bt.bt_index[0]
+    req = pd.Timestamp(date)
+    d = idx[idx <= req]
+    d = first if len(d) == 0 or d[-1] < first else d[-1]
+    i = idx.get_loc(d)
+    p = int(np.searchsorted(bt.rebal_idx, i, side="right") - 1)
+    k = i - bt.rebal_idx[p]
+    w = res["weights"].values[p]
+    if k == 0:
+        w_open = w.copy()
+    else:
+        vals = w * bt.G[p][k - 1]
+        w_open = vals / vals.sum()
+    r_assets = bt.R[i]
+    contrib = w_open * r_assets
+    gross = float(contrib.sum())
+    daily = res["daily"]
+    net = float(daily.loc[d])
+    hist = daily.loc[:d]
+    month = daily.loc[d.strftime("%Y-%m-01"):d]
+    year = daily.loc[d.strftime("%Y-01-01"):d]
+    return {
+        "requested": req, "date": d, "is_trading_day": d == req, "rebalance_day": k == 0,
+        "net": net, "gross": gross, "cost": gross - net,
+        "weights": pd.Series(w_open, index=bt.assets),
+        "asset_ret": pd.Series(r_assets, index=bt.assets),
+        "contrib": pd.Series(contrib, index=bt.assets),
+        "percentile": float((hist < net).mean()),
+        "mtd": float((1 + month).prod() - 1), "ytd": float((1 + year).prod() - 1),
+        "window": daily.loc[:d].iloc[-30:],
+    }
