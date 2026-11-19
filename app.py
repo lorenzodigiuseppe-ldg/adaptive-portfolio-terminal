@@ -240,7 +240,9 @@ def base_layout(fig, height=340, title_text=None, legend=True, yfmt=None, log=Fa
     fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor=BORDER, tickfont=dict(color=INK2), automargin=True,
                      showspikes=True, spikecolor=AMBER_DIM, spikethickness=1, spikedash="dot")
     fig.update_yaxes(gridcolor=GRID, zerolinecolor="#333333", linecolor=BORDER, tickfont=dict(color=INK2), automargin=True,
-                     tickformat=yfmt, type="log" if log else "linear")
+                     tickformat=yfmt)
+    if log:
+        fig.update_yaxes(type="log")
     return fig
 
 
