@@ -42,15 +42,19 @@ COL = {
     "ONS (log-wealth)": "#c98500", "ContextGate": "#9085e9", "FollowTheLeader": "#d95926",
     "1/3 static mix": "#8a8985", "MVO": "#9085e9", "RiskParity": "#d95926", "MinCVaR": "#199e70",
     "1/N": "#d55181", "60/40 SPY/IEF": "#0ca30c", "Oracle const. mix*": "#c98500",
+    "Momentum": "#c98500", "Core": "#3987e5", "Balanced 10%": "#199e70", "Growth 12%": "#c98500",
+    "Aggressive 15%": "#e66767",
 }
 ASSET_COL = {"DBC": "#3987e5", "GLD": "#c98500", "IEF": "#199e70", "TLT": "#0ca30c",
              "SPY": "#d55181", "VEA": "#9085e9", "IEMG": "#d95926"}
 NAMES = {"DBC": "Commodities", "GLD": "Gold", "IEF": "UST 7-10Y", "TLT": "UST 20Y+",
          "SPY": "S&P 500", "VEA": "Developed ex-US", "IEMG": "Emerging Mkts"}
 PAGES = {
+    "HOME": "Product Overview",
     "MON": "Market Monitor", "PORT": "Strategy Backtest", "ALLOC": "Recommended Allocation",
     "EXPT": "Expert Analytics", "LRN": "Learner Diagnostics", "RISK": "Risk Analytics",
     "STAT": "Statistical Validation", "DATA": "Data Management", "PNL": "Daily P&L",
+    "STRS": "Stress Test & Downside Protection",
 }
 PAGE_KEYS = list(PAGES)
 
@@ -403,7 +407,7 @@ def get_bench(mtime, es, xs, gamma):
 # Session defaults & sidebar
 # ======================================================================================
 DEFAULTS = dict(
-    nav="PORT", learner="AdaptiveBOA", gamma=5.0, rho=1.0, alpha=0.01, eta=0.25, ons_beta=1.0,
+    nav="HOME", profile="Core", max_lev=2.0, universe="Core 3", learner="AdaptiveBOA", gamma=5.0, rho=1.0, alpha=0.01, eta=0.25, ons_beta=1.0,
     gate_lr=0.05, gate_l2=0.01, ftl_window=52, rebal="Weekly", refit=4, lag=1, tc=5.0,
     split=date(2016, 12, 31), mvo_delta=4.0, mvo_cap=0.40, mvo_lb_mu=504, mvo_lb_cov=252, rp_lb=126,
     cvar_beta=0.95, cvar_lb=504, cvar_cap=0.40,
@@ -421,8 +425,9 @@ def reset_defaults():
 
 def on_command():
     c = st.session_state.get("cmd", "").strip().upper().replace("<GO>", "").strip()
-    alias = {"HELP": "DATA", "BT": "PORT", "ALLOCATION": "ALLOC", "W": "ALLOC", "EXP": "EXPT",
-             "LEARN": "LRN", "VAR": "RISK", "TEST": "STAT", "P&L": "PNL", "DAY": "PNL", "PL": "PNL"}
+    alias = {"HELP": "DATA", "START": "HOME", "PRODUCT": "HOME", "BT": "PORT", "ALLOCATION": "ALLOC", "W": "ALLOC", "EXP": "EXPT",
+             "LEARN": "LRN", "VAR": "RISK", "TEST": "STAT", "P&L": "PNL", "DAY": "PNL", "PL": "PNL",
+             "STRESS": "STRS", "PROOF": "STRS", "CRISIS": "STRS"}
     c = alias.get(c, c)
     if c in PAGES:
         st.session_state["nav"] = c
@@ -435,6 +440,15 @@ REBAL = {"Weekly": 5, "Bi-weekly": 10, "Monthly": 21}
 
 with st.sidebar:
     html(f'<div class="brand" style="font-size:13px">◆ CONTROL PANEL</div>')
+    title("Product profile")
+    st.selectbox("Risk profile", list(C.PROFILES), key="profile",
+                 help="Core = the portfolio as built. The others scale it to a volatility target with leverage "
+                      "(borrowing at T-bills + 0.5%). More return potential, deeper drawdowns.")
+    if st.session_state.profile != "Core":
+        st.select_slider("Maximum leverage", [1.0, 1.5, 2.0, 3.0], key="max_lev")
+    st.selectbox("Strategy set", ["Core 3", "Extended 6"], key="universe",
+                 help="Core 3: MVO, Risk Parity, Min-CVaR. Extended 6 adds Momentum, 1/N and 60/40 as "
+                      "strategies the learner can choose.")
     title("Meta-learner")
     st.selectbox("Algorithm", C.LEARNERS, key="learner")
     L = st.session_state.learner
@@ -483,7 +497,11 @@ S = st.session_state
 es = C.EngineSettings(rebal_every=REBAL[S.rebal], expert_refit=int(S.refit), lag=int(S.lag), tc_bps=float(S.tc))
 xs = C.ExpertSettings(mvo_delta=float(S.mvo_delta), mvo_lb_mu=int(S.mvo_lb_mu), mvo_lb_cov=int(S.mvo_lb_cov),
                       mvo_cap=float(S.mvo_cap), rp_lb=int(S.rp_lb), cvar_beta=float(S.cvar_beta),
-                      cvar_lb=int(S.cvar_lb), cvar_cap=float(S.cvar_cap))
+                      cvar_lb=int(S.cvar_lb), cvar_cap=float(S.cvar_cap),
+                      universe="extended" if S.universe == "Extended 6" else "core")
+rs = C.RiskSettings(target=C.PROFILES[S.profile], max_lev=float(S.max_lev))
+LEVERED = rs.target is not None
+PROFILE_TXT = S.profile + (f" · max {rs.max_lev:g}x" if LEVERED else "") + f" · {S.universe}"
 ls = C.LearnerSettings(name=S.learner, gamma=float(S.gamma), rho=float(S.rho), alpha=float(S.alpha),
                        eta=float(S.eta), ons_beta=float(S.ons_beta), gate_lr=float(S.gate_lr),
                        gate_l2=float(S.gate_l2), ftl_window=int(S.ftl_window))
@@ -508,7 +526,7 @@ feed = ('<span class="up">● LIVE</span>' if _rs in ("ok", "updated", "checked"
 html(f"""
 <div class="topbar">
   <div class="brand">◆ APT <small>ADAPTIVE PORTFOLIO TERMINAL · online aggregation of MVO / ERC / Min-CVaR</small></div>
-  <div class="clock">{feed} <b>{now.strftime('%d-%b-%Y %H:%M').upper()}</b> local · close of <b>{asof}</b></div>
+  <div class="clock"><span class="amber">{PROFILE_TXT.upper()}</span> · {feed} <b>{now.strftime('%d-%b-%Y %H:%M').upper()}</b> local · close of <b>{asof}</b></div>
 </div>""")
 
 if have_data:
@@ -540,7 +558,9 @@ if have_data and page != "DATA" and page != "MON":
         Wd = get_experts(mt, es, xs)
         F = get_features(mt, es)
         bench = get_bench(mt, es, xs, ls.gamma)
-    res, learner = C.run_strategy(bt, Wd, ls, F)
+    res_core, learner = C.run_strategy(bt, Wd, ls, F)
+    res = C.apply_risk_target(bt, res_core, rs)
+    EXP = list(Wd)
     allres = {ls.name: res, **{k: v for k, v in bench.items() if k != ls.name}}
     rf_ = bt.rf if bt.rf is not None else None
 
@@ -574,7 +594,72 @@ def perf_kpis(r, base_r, start, end):
 # ======================================================================================
 # Pages
 # ======================================================================================
-if page == "MON":
+if page == "HOME":
+    rec = C.recommend_now(bt, xs, learner, F, res=res, rs=rs)
+    k = C.kpis(res, rf_, PPY, OOS_START, None)
+    grown = 10000 * float((1 + res["daily"].loc[OOS_START:]).prod())
+    top = rec["weights"].sort_values(ascending=False).head(3)
+    html(f'''<div class="kpi" style="border-left:4px solid {AMBER};padding:14px 16px;margin-bottom:10px">
+    <div class="l">Adaptive Portfolio Terminal</div>
+    <div class="v" style="font-size:24px;white-space:normal">One portfolio that learns which strategy to trust.</div>
+    <div class="s" style="white-space:normal;font-size:12.5px;margin-top:4px">Seven liquid ETFs across stocks, bonds, gold and
+    commodities. {len(EXP)} portfolio strategies compete; an online-learning algorithm reallocates between them every
+    week from live market data. You choose the risk level. Every number is explained and stress-tested.</div></div>''')
+    title("Your product today", f"{PROFILE_TXT} · results since {OOS_START}, years the model never saw in tuning")
+    kpi_row([
+        ("Return / yr", pct(k["CAGR"]), "net of costs"),
+        ("Volatility", pct(k["Vol"]), "annual"),
+        ("Sharpe", f'{k["Sharpe"]:.2f}', "return per unit of risk"),
+        ("Max drawdown", pct(k["MaxDD"]), "worst peak-to-trough"),
+        ("$10,000 became", f"${grown:,.0f}", f"since {OOS_START[:4]}"),
+        ("Leverage now", f'{rec["leverage"]:.2f}x', S.profile),
+    ])
+    title("Choose your risk profile", "same engine, four risk levels, next to two simple reference portfolios")
+    ptab, curves = C.profile_table(bt, res_core, rf_, PPY, OOS_START, max_lev=rs.max_lev,
+                                   extra={"1/N": bench["1/N"], "60/40 SPY/IEF": bench["60/40 SPY/IEF"]})
+    a, b = st.columns([1.25, 1])
+    with a:
+        money = [c for c in ptab.columns if c.startswith("$")][0]
+        sty = ptab.style.format({"Return / yr": "{:.1%}", "Volatility": "{:.1%}", "Sharpe": "{:.2f}",
+                                 "Max drawdown": "{:.1%}", "Worst year": "{:+.1%}", "Avg leverage": "{:.2f}x",
+                                 "Max leverage": "{:.2f}x", money: "${:,.0f}"})
+        table(styler_map(sty, color_sign, subset=["Worst year"]))
+        html('<div class="note">Higher profiles borrow to scale the same portfolio up (cost: T-bills + 0.5%). '
+             'Return rises, and so do volatility and drawdowns; the Sharpe ratio does not improve. '
+             'Leverage requires a margin account and can lose more than an unlevered portfolio.</div>')
+    with b:
+        show(fig_lines(curves, height=330, log=True, widths={S.profile: 2.8},
+                       title_text="GROWTH OF $1 BY PROFILE"), key="home_prof")
+    a, b, c = st.columns(3)
+    with a:
+        title("What it holds today")
+        html("".join(f'<div class="tile" style="margin-bottom:4px"><div class="row"><span class="tk">{t}</span>'
+                     f'<span class="nm">{NAMES[t]}</span></div><div class="px">{v:.0%}</div></div>'
+                     for t, v in top.items()))
+        html('<div class="note">Full portfolio and order ticket: <b>ALLOC</b>.</div>')
+    with b:
+        title("Which strategy it trusts")
+        html("".join(f'<div class="tile" style="margin-bottom:4px"><div class="row"><span class="tk">{n}</span></div>'
+                     f'<div class="px">{v:.0%}</div></div>'
+                     for n, v in rec["pi"].sort_values(ascending=False).head(3).items()))
+        html('<div class="note">How the trust evolved: <b>LRN</b>.</div>')
+    with c:
+        title("How it works")
+        html('<div class="tile"><div class="row"><span class="tk">1 · COMPETE</span></div>'
+             '<div class="nm" style="font-size:11.5px">Each strategy builds its own portfolio from the seven ETFs.</div></div>'
+             '<div class="tile" style="margin-top:4px"><div class="row"><span class="tk">2 · LEARN</span></div>'
+             '<div class="nm" style="font-size:11.5px">Every week the learner scores them and shifts money to what works.</div></div>'
+             '<div class="tile" style="margin-top:4px"><div class="row"><span class="tk">3 · SCALE</span></div>'
+             '<div class="nm" style="font-size:11.5px">Your risk profile sets how much of it you hold.</div></div>')
+    title("Where to look next")
+    html('<div class="note"><b>PORT</b> full track record vs benchmarks · <b>RISK</b> worst days, months and drawdowns · '
+         '<b>STRS</b> behaviour in six market stress periods · <b>PNL</b> any single day explained · '
+         '<b>STAT</b> statistical tests of whether the edge is real.</div>')
+    html('<div class="note">Figures are backtested, net of trading costs, on daily closes from Yahoo Finance. '
+         'The tests on STAT show no statistically significant advantage over simple portfolios; the product\'s '
+         'value is a transparent, rule-based, risk-controlled allocation.</div>')
+
+elif page == "MON":
     cols = st.columns(7)
     for c, t in zip(cols, snap.index):
         s = snap.loc[t]
@@ -626,7 +711,7 @@ elif page == "PORT":
     choice = st.radio("Window", ["FULL", "IN-SAMPLE", "OUT-OF-SAMPLE"], index=2, horizontal=True,
                       key="port_win", label_visibility="collapsed")
     start, end = period_bounds(choice)
-    html(f'<div class="kpi-cap">{ls.name} · coloured figures = difference vs {S.base} '
+    html(f'<div class="kpi-cap">{ls.name} · {PROFILE_TXT} · coloured figures = difference vs {S.base} '
          f'(green = better) · turnover per year</div>')
     kpi_row(perf_kpis(res, allres[S.base], start, end))
 
@@ -651,11 +736,18 @@ elif page == "PORT":
          'sample. Not investable; it is the ceiling for any constant combination.</div>')
 
 elif page == "ALLOC":
-    rec = C.recommend_now(bt, xs, learner, F)
+    rec = C.recommend_now(bt, xs, learner, F, res=res, rs=rs)
     w = rec["weights"]
-    eff_n = 1 / (w ** 2).sum()
+    lev_now = rec["leverage"]
+    eff_n = 1 / (rec["base_weights"] ** 2).sum()
+    if LEVERED:
+        html(f'<div class="note">Risk profile <b>{S.profile}</b>: positions are scaled {lev_now:.2f}x to target '
+             f'{rs.target:.0%} volatility. ' + (f'Weights add up to {lev_now:.0%}; the extra {lev_now - 1:.0%} is '
+             f'borrowed (margin account required).' if lev_now > 1 else
+             f'Weights add up to {lev_now:.0%}; the remaining {1 - lev_now:.0%} stays in cash.') + '</div>')
     kpi_row([
         ("As of close", rec["as_of"].strftime("%d-%b-%Y").upper(), "hold from next rebalance"),
+        ("Leverage", f"{lev_now:.2f}x", S.profile),
         ("Ex-ante vol", pct(rec["ex_ante_vol"]), "LW-shrunk 1Y covariance"),
         ("Largest position", f"{w.idxmax()} {w.max():.1%}", NAMES[w.idxmax()]),
         ("Effective # assets", f"{eff_n:.1f}", "1 / Σw²"),
@@ -696,24 +788,33 @@ elif page == "ALLOC":
                            "Target $": w.values * notional, "Last": last[w.index].values})
     ticket["Shares"] = np.floor(ticket["Target $"] / ticket["Last"]).astype(int)
     ticket.index = w.index
+    if LEVERED and abs(lev_now - 1) > 1e-9:
+        html(f'<div class="note">{"Borrowing" if lev_now > 1 else "Cash"}: '
+             f'${abs(lev_now - 1) * notional:,.0f} ({abs(lev_now - 1):.0%} of the portfolio value).</div>')
     with c2:
         table(ticket.style.format({"Weight": "{:.1%}", "Target $": "${:,.0f}", "Last": "{:.2f}", "Shares": "{:,}"}))
     st.download_button("DOWNLOAD TICKET (CSV)", ticket.to_csv().encode(), "apt_order_ticket.csv", "text/csv")
 
     title("Allocation history", ls.name)
-    show(fig_stacked(res["weights"], ASSET_COL, height=300, split=SPLIT), key="al_hist")
+    show(fig_stacked(res.get("base_weights", res["weights"]), ASSET_COL, height=300, split=SPLIT), key="al_hist")
+    if LEVERED:
+        title("Leverage history", f"scaling applied to reach the {rs.target:.0%} volatility target")
+        fig = fig_lines({ls.name: res["leverage"]}, height=220, split=SPLIT)
+        fig.add_hline(y=1, line=dict(color=INK3, width=1))
+        fig.update_layout(showlegend=False)
+        show(fig, key="al_lev")
 
 elif page == "EXPT":
     choice = st.radio("Window", ["FULL", "IN-SAMPLE", "OUT-OF-SAMPLE"], index=2, horizontal=True,
                       key="ex_win", label_visibility="collapsed")
     start, end = period_bounds(choice)
-    exres = {n: bench[n] for n in C.EXPERT_NAMES}
+    exres = {n: bench[n] for n in EXP}
     exres[ls.name] = res
     title("Expert performance", choice.lower())
     table(fmt_perf(C.comparison_table(exres, rf_, PPY, start, end)))
 
-    tabs = st.tabs([f"{n} weights" for n in C.EXPERT_NAMES])
-    for tb, n in zip(tabs, C.EXPERT_NAMES):
+    tabs = st.tabs([f"{n} weights" for n in EXP])
+    for tb, n in zip(tabs, EXP):
         with tb:
             show(fig_stacked(pd.DataFrame(Wd[n], index=bt.dates, columns=bt.assets), ASSET_COL, height=300,
                              split=SPLIT), key=f"ex_{n}")
@@ -728,7 +829,7 @@ elif page == "EXPT":
     with b:
         title("Rolling 1-year Sharpe", "experts")
         rs = {}
-        for n in C.EXPERT_NAMES:
+        for n in EXP:
             ex = bench[n]["daily"] - rf_.reindex(bench[n]["daily"].index).fillna(0)
             rs[n] = (ex.rolling(252).mean() / ex.rolling(252).std() * np.sqrt(252)).dropna()
         show(fig_lines(rs, height=300, split=SPLIT), key="ex_rs")
@@ -767,6 +868,8 @@ elif page == "RISK":
     opts = [ls.name] + [n for n in C.BENCHMARKS if n != ls.name]
     a, b = st.columns([1, 2])
     with a:
+        if S.get("risk_who") not in opts:
+            S["risk_who"] = opts[0]
         who = st.selectbox("Strategy", opts, key="risk_who")
     with b:
         choice = st.radio("Window", ["FULL", "IN-SAMPLE", "OUT-OF-SAMPLE"], index=0, horizontal=True,
@@ -865,6 +968,8 @@ elif page == "PNL":
     last_day = bt.bt_index[-1].date()
     c1, c2, c3 = st.columns([1.4, 1, 1])
     with c1:
+        if S.get("pnl_who") not in opts:
+            S["pnl_who"] = opts[0]
         who = st.selectbox("Portfolio", opts, key="pnl_who")
     with c2:
         day = st.date_input("Date", value=last_day, min_value=bt.bt_index[0].date(), max_value=last_day,
@@ -886,6 +991,9 @@ elif page == "PNL":
     if not b["is_trading_day"]:
         html(f'<div class="note">{b["requested"].strftime("%a %d %b %Y")} was not a trading day (weekend or holiday): '
              f'showing the previous session, {b["date"].strftime("%a %d %b %Y")}.</div>')
+    if abs(b.get("financing", 0.0)) > 0:
+        html(f'<div class="note">Leverage {b["leverage"]:.2f}x: ETF contributions are scaled by the leverage; '
+             f'financing for the day {b["financing"]:+.3%} ({b["financing"] * amount:+,.2f} $).</div>')
     if b["rebalance_day"]:
         html(f'<div class="note">Rebalance day: the result includes {b["cost"] * 1e4:.2f} bp of trading costs.</div>')
     kpi_row([
@@ -939,6 +1047,85 @@ elif page == "PNL":
          f'results are for the model portfolio net of costs. For your own account, multiply shares held by each '
          f'ETF\'s price change.</div>')
 
+elif page == "STRS":
+    html(f'<div class="kpi-cap">Does {ls.name} hold up when markets fall? Each period compares it with the three '
+         f'recipes alone and with simple portfolios of the same seven ETFs. All figures net of costs.</div>')
+    per = st.radio("Period", list(C.STRESS_PERIODS), index=0, horizontal=True, key="strs_per",
+                   label_visibility="collapsed")
+    cmp_ = C.period_compare(allres, ls.name, per)
+    d0, d1 = C.period_dates(allres, ls.name, per)
+    me, ew, mix = cmp_.loc[ls.name], cmp_.loc["1/N"], cmp_.loc["1/3 static mix"]
+    saved = me["Return"] - ew["Return"]
+    html(f'<div class="note">{per}: {C.STRESS_NOTES[per]} · {d0.strftime("%d %b %Y")} → {d1.strftime("%d %b %Y")}</div>')
+    kpi_row([
+        (ls.name, f"{me['Return']:+.1%}", f"rank {int(me['Rank'])} of {len(cmp_)}"),
+        ("1/N same ETFs", f"{ew['Return']:+.1%}", "equal weight"),
+        ("Cushion vs 1/N", f"{saved:+.1%}", "green = lost less" if saved > 0 else "lost more"),
+        ("vs 1/3 static mix", f"{me['Return'] - mix['Return']:+.1%}", f"static mix {mix['Return']:+.1%}"),
+        ("Worst drawdown", f"{me['Max drawdown']:.1%}", f"1/N {ew['Max drawdown']:.1%}"),
+    ])
+    a, b = st.columns([1.15, 1])
+    with a:
+        title("Return over the period", "selected strategy outlined in amber")
+        rs = cmp_["Return"].sort_values()
+        fig = go.Figure(go.Bar(x=rs.values, y=list(rs.index), orientation="h",
+                               marker_color=[COL.get(n, INK2) for n in rs.index],
+                               marker_line_color=[AMBER if n == ls.name else "rgba(0,0,0,0)" for n in rs.index],
+                               marker_line_width=[2.5 if n == ls.name else 0 for n in rs.index],
+                               text=[f"{v:+.1%}" for v in rs.values], textposition="outside",
+                               textfont=dict(color=INK), hovertemplate="%{y}: %{x:+.2%}<extra></extra>"))
+        base_layout(fig, 320, legend=False)
+        lo, hi = min(rs.min(), 0), max(rs.max(), 0)
+        pad = max(hi - lo, 0.01) * 0.22
+        fig.update_xaxes(tickformat="+.0%", range=[lo - pad, hi + pad])
+        fig.update_layout(hovermode="closest", bargap=0.3)
+        fig.add_vline(x=0, line=dict(color=INK3, width=1))
+        show(fig, key="strs_ret")
+    with b:
+        title("What the ETFs did", "the raw material every portfolio had to work with")
+        mv = C.period_asset_moves(bt.returns, d0, d1).sort_values()
+        fig = go.Figure(go.Bar(x=mv.values, y=list(mv.index), orientation="h",
+                               marker_color=[UP if v >= 0 else DOWN for v in mv.values],
+                               text=[f"{v:+.1%}" for v in mv.values], textposition="outside",
+                               textfont=dict(color=INK), hovertemplate="%{y}: %{x:+.2%}<extra></extra>"))
+        base_layout(fig, 320, legend=False)
+        lo, hi = min(mv.min(), 0), max(mv.max(), 0)
+        pad = max(hi - lo, 0.01) * 0.22
+        fig.update_xaxes(tickformat="+.0%", range=[lo - pad, hi + pad])
+        fig.update_layout(hovermode="closest", bargap=0.3)
+        fig.add_vline(x=0, line=dict(color=INK3, width=1))
+        show(fig, key="strs_etf")
+    ppi = C.period_pi(res, allres, ls.name, per)
+    if ppi is not None:
+        title("Where the learner had placed its trust", "average weight on each recipe during the period")
+        kpi_row([(n, f"{ppi[n]:.0%}", "of the portfolio") for n in ppi.index])
+    title("Period detail")
+    sty = cmp_.style.format({"Return": "{:+.1%}", "Max drawdown": "{:.1%}", "Vol (ann.)": "{:.1%}",
+                             "Up days": "{:.0%}", "Rank": "{:d}"})
+    table(styler_map(sty, color_sign, subset=["Return"]))
+
+    title("Scorecard across all stress periods", f"{ls.name} against the simple alternatives")
+    sc = C.stress_scorecard(allres, ls.name)
+    pc = [c for c in sc.columns if c != "Rank of 7"]
+    sty = sc.style.format({**{c: "{:+.1%}" for c in pc}, "Rank of 7": "{:d}"})
+    table(styler_map(sty, color_sign, subset=["vs 1/N"]))
+    wins = int((sc["vs 1/N"] > 0).sum())
+    wins_mix = int((sc[ls.name] > sc["1/3 static mix"] + 0.0005).sum())
+
+    title("Downside capture", f"all days since {OOS_START}, measured against 1/N of the same ETFs")
+    cap = C.capture_ratios(allres, ls.name, "1/N", OOS_START)
+    kpi_row([
+        ("Down-day capture", f"{cap['down']:.0%}", f"of 1/N losses on its {cap['n_down']:,} down days"),
+        ("Up-day capture", f"{cap['up']:.0%}", f"of 1/N gains on its {cap['n_up']:,} up days"),
+        ("Worst 5% of days", f"{cap['worst5_strategy']:+.2%}", f"1/N averaged {cap['worst5_bench']:+.2%}"),
+    ])
+    html(f'<div class="note"><b>How to read this.</b> {ls.name} lost less than an equal-weight portfolio of the same '
+         f'ETFs in {wins} of {len(sc)} stress periods, and beat the 1/3 static mix in {wins_mix} of {len(sc)}. '
+         f'It takes {cap["down"]:.0%} of the bad days and {cap["up"]:.0%} of the good days: when those two numbers '
+         f'are close, the protection comes from carrying less risk, not from avoiding losses selectively. '
+         f'A cushion against 1/N shows the system is defensive; a cushion against the 1/3 static mix is what '
+         f'would show the learning layer itself adds value.</div>')
+
 elif page == "DATA":
     title("Price file")
     if have_data:
@@ -983,6 +1170,7 @@ elif page == "DATA":
         Wd = get_experts(mt, es, xs)
         F = get_features(mt, es)
         res, _ = C.run_strategy(bt, Wd, ls, F)
+        res = C.apply_risk_target(bt, res, rs)
         c1, c2, c3 = st.columns(3)
         with c1:
             st.download_button("PRICES (CSV)", prices.to_csv().encode(), "apt_prices.csv", "text/csv")
@@ -995,5 +1183,5 @@ elif page == "DATA":
         table(raw.tail(10).style.format("{:.2f}", na_rep="–"))
 
 html(f'<div class="note" style="margin-top:18px">Research software, not investment advice. Past performance '
-     f'does not predict future results. Settings: {ls.name} · γ={ls.gamma:g} ρ={ls.rho:g} α={ls.alpha:g} · '
+     f'does not predict future results. Settings: {PROFILE_TXT} · {ls.name} · γ={ls.gamma:g} ρ={ls.rho:g} α={ls.alpha:g} · '
      f'{S.rebal.lower()} rebalance · {es.tc_bps:g}bp · lag {es.lag}d · IS ends {SPLIT}</div>')
