@@ -25,7 +25,9 @@ from adaptive_portfolio import stats_tests as ST  # noqa: E402
 from adaptive_portfolio.data import fetch_yahoo_csv  # noqa: E402
 from adaptive_portfolio.features import features_at  # noqa: E402
 
-DATA_PATH = os.path.join(HERE, "etf_prices_yahoo.csv")
+DATA_DIR = os.environ.get("APT_DATA_DIR", HERE)      # desktop build stores data in the user's profile
+os.makedirs(DATA_DIR, exist_ok=True)
+DATA_PATH = os.path.join(DATA_DIR, "etf_prices_yahoo.csv")
 
 # ======================================================================================
 # Look & feel
@@ -48,7 +50,7 @@ NAMES = {"DBC": "Commodities", "GLD": "Gold", "IEF": "UST 7-10Y", "TLT": "UST 20
 PAGES = {
     "MON": "Market Monitor", "PORT": "Strategy Backtest", "ALLOC": "Recommended Allocation",
     "EXPT": "Expert Analytics", "LRN": "Learner Diagnostics", "RISK": "Risk Analytics",
-    "STAT": "Statistical Validation", "DATA": "Data Management",
+    "STAT": "Statistical Validation", "DATA": "Data Management", "PNL": "Daily P&L",
 }
 PAGE_KEYS = list(PAGES)
 
@@ -63,7 +65,7 @@ html, body, [class*="css"], .stApp, .stMarkdown, .stText, input, textarea, selec
 .stApp {{ background: {BG}; color: {INK}; }}
 header[data-testid="stHeader"] {{ background: transparent; height: 2rem; }}
 #MainMenu, footer {{ visibility: hidden; }}
-.block-container {{ padding-top: 1.2rem; padding-bottom: 2rem; max-width: 100%; }}
+.block-container {{ padding-top: 3.4rem; padding-bottom: 2rem; max-width: 100%; }}
 section[data-testid="stSidebar"] {{ background: #050505; border-right: 1px solid {AMBER_DIM}; }}
 section[data-testid="stSidebar"] * {{ font-size: 12px; }}
 h1, h2, h3, h4 {{ color: {AMBER} !important; letter-spacing: .04em; }}
@@ -84,9 +86,12 @@ h1, h2, h3, h4 {{ color: {AMBER} !important; letter-spacing: .04em; }}
   border-bottom:1px solid {AMBER_DIM}; padding:2px 0 3px 0; margin:10px 0 6px 0; }}
 .ptitle span {{ color:{INK3}; font-weight:400; text-transform:none; letter-spacing:0; margin-left:8px; }}
 .kpi {{ background:{PANEL}; border:1px solid {BORDER}; padding:8px 10px 7px 10px; height:100%; }}
-.kpi .l {{ color:{AMBER}; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; }}
-.kpi .v {{ color:{INK}; font-size:21px; font-weight:500; line-height:1.25; }}
-.kpi .s {{ font-size:11px; color:{INK2}; }}
+.kpi .l {{ color:{AMBER}; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kpi .v {{ color:{INK}; font-size:clamp(15px, 1.55vw, 21px); font-weight:500; line-height:1.3;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kpi .s {{ font-size:11px; color:{INK2}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.kpi-cap {{ color:{INK3}; font-size:11px; margin:-2px 0 4px 0; }}
 .tile {{ background:{PANEL}; border:1px solid {BORDER}; padding:7px 9px; }}
 .tile .tk {{ color:{AMBER}; font-weight:600; font-size:13px; }}
 .tile .nm {{ color:{INK3}; font-size:10px; }}
@@ -100,7 +105,12 @@ div[role="radiogroup"] > label {{ background:#0e0e0e; border:1px solid {BORDER};
 div[role="radiogroup"] > label:hover {{ border-color:{AMBER}; }}
 div[role="radiogroup"] > label:has(input:checked) {{ background:{AMBER}; border-color:{AMBER}; }}
 div[role="radiogroup"] > label:has(input:checked) p {{ color:#000 !important; font-weight:600; }}
-div[role="radiogroup"] > label > div:first-child {{ display:none; }}
+div[role="radiogroup"] > label > div:first-child,
+[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {{ display:none !important; }}
+[data-testid="stRadio"] label[data-baseweb="radio"] {{ background:#0e0e0e; border:1px solid {BORDER};
+  padding:3px 10px !important; margin-right:4px !important; border-radius:0; }}
+[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {{ background:{AMBER}; border-color:{AMBER}; }}
+[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) * {{ color:#000 !important; font-weight:600; }}
 .stButton > button, .stDownloadButton > button {{ background:#0e0e0e; color:{AMBER}; border:1px solid {AMBER};
   border-radius:0; font-weight:600; letter-spacing:.06em; }}
 .stButton > button:hover, .stDownloadButton > button:hover {{ background:{AMBER}; color:#000; }}
@@ -298,7 +308,7 @@ def fig_heat(df: pd.DataFrame, height=330, title_text=None, zmid=0, fmt=".2f", z
 # ======================================================================================
 # Daily auto-refresh of market data
 # ======================================================================================
-CHECK_FILE = os.path.join(HERE, ".last_data_check")
+CHECK_FILE = os.path.join(DATA_DIR, ".last_data_check")
 
 
 def _now_new_york():
@@ -410,7 +420,7 @@ def reset_defaults():
 def on_command():
     c = st.session_state.get("cmd", "").strip().upper().replace("<GO>", "").strip()
     alias = {"HELP": "DATA", "BT": "PORT", "ALLOCATION": "ALLOC", "W": "ALLOC", "EXP": "EXPT",
-             "LEARN": "LRN", "VAR": "RISK", "TEST": "STAT"}
+             "LEARN": "LRN", "VAR": "RISK", "TEST": "STAT", "P&L": "PNL", "DAY": "PNL", "PL": "PNL"}
     c = alias.get(c, c)
     if c in PAGES:
         st.session_state["nav"] = c
@@ -546,16 +556,16 @@ def perf_kpis(r, base_r, start, end):
         good = dv < 0 if inv else dv > 0
         cls = "up" if good else "down" if dv != 0 else "flat"
         txt = f"{dv:+.1%}" if p else f"{dv:+.2f}"
-        return f'<span class="{cls}">{txt}</span> vs {S.base}'
+        return f'<span class="{cls}">{txt}</span>'
 
     return [
         ("CAGR", pct(k["CAGR"]), d("CAGR")),
-        ("Volatility", pct(k["Vol"]), d("Vol", inv=True)),
+        ("Vol", pct(k["Vol"]), d("Vol", inv=True)),
         ("Sharpe", f'{k["Sharpe"]:.2f}', d("Sharpe", p=False)),
         ("Sortino", f'{k["Sortino"]:.2f}', d("Sortino", p=False)),
-        ("Max drawdown", pct(k["MaxDD"]), d("MaxDD")),
-        ("CVaR 95% (1d)", pct(k["CVaR95(d)"], 2), d("CVaR95(d)", inv=True)),
-        ("Turnover / yr", pct(k.get("Turnover/yr", np.nan), 0), d("Turnover/yr", inv=True)),
+        ("Max DD", pct(k["MaxDD"]), d("MaxDD")),
+        ("CVaR95 1D", pct(k["CVaR95(d)"], 2), d("CVaR95(d)", inv=True)),
+        ("Turnover", pct(k.get("Turnover/yr", np.nan), 0), d("Turnover/yr", inv=True)),
     ]
 
 
@@ -614,6 +624,8 @@ elif page == "PORT":
     choice = st.radio("Window", ["FULL", "IN-SAMPLE", "OUT-OF-SAMPLE"], index=2, horizontal=True,
                       key="port_win", label_visibility="collapsed")
     start, end = period_bounds(choice)
+    html(f'<div class="kpi-cap">{ls.name} · coloured figures = difference vs {S.base} '
+         f'(green = better) · turnover per year</div>')
     kpi_row(perf_kpis(res, allres[S.base], start, end))
 
     title("Growth of $1", f"{ls.name} vs benchmarks · net of {es.tc_bps:g}bp costs")
@@ -846,12 +858,91 @@ elif page == "STAT":
         table(tb.head(12).style.format({"IS_Sharpe": "{:.3f}", "IS_CAGR": "{:.2%}", "IS_MaxDD": "{:.1%}",
                                         "IS_SR_daily": "{:.4f}"}), hide_index=True)
 
+elif page == "PNL":
+    opts = [ls.name] + [n for n in C.BENCHMARKS if n != ls.name]
+    last_day = bt.bt_index[-1].date()
+    c1, c2, c3 = st.columns([1.4, 1, 1])
+    with c1:
+        who = st.selectbox("Portfolio", opts, key="pnl_who")
+    with c2:
+        day = st.date_input("Date", value=last_day, min_value=bt.bt_index[0].date(), max_value=last_day,
+                            key="pnl_date")
+    with c3:
+        amount = st.number_input("Portfolio value ($)", 100.0, 1e10, 10000.0, step=1000.0, key="pnl_amt")
+    b = C.day_breakdown(bt, allres[who], day)
+    base_b = C.day_breakdown(bt, allres[S.base], day) if S.base != who else None
+    r = b["net"]
+    up = r > 0
+    verdict = "POSITIVE DAY" if r > 0 else "NEGATIVE DAY" if r < 0 else "FLAT DAY"
+    vcls = "up" if r > 0 else "down" if r < 0 else "flat"
+    arrow = "▲" if r > 0 else "▼" if r < 0 else "■"
+    dstr = b["date"].strftime("%A %d %B %Y")
+    html(f'''<div class="kpi" style="border-left:4px solid {UP if up else DOWN if r < 0 else INK3};margin-bottom:8px">
+    <div class="l">{who} · {dstr}</div>
+    <div class="v {vcls}" style="font-size:30px">{arrow} {verdict} &nbsp; {r:+.2%} &nbsp; {'+' if r >= 0 else '−'}${abs(r) * amount:,.2f}</div>
+    <div class="s">on a portfolio of ${amount:,.0f}</div></div>''')
+    if not b["is_trading_day"]:
+        html(f'<div class="note">{b["requested"].strftime("%a %d %b %Y")} was not a trading day (weekend or holiday): '
+             f'showing the previous session, {b["date"].strftime("%a %d %b %Y")}.</div>')
+    if b["rebalance_day"]:
+        html(f'<div class="note">Rebalance day: the result includes {b["cost"] * 1e4:.2f} bp of trading costs.</div>')
+    kpi_row([
+        (f"vs {S.base}", (f"{r - base_b['net']:+.2%}" if base_b else "–"),
+         (f"{S.base} {base_b['net']:+.2%}" if base_b else "same portfolio")),
+        ("Rank in history", f"{b['percentile']:.0%}", "of past days were worse"),
+        ("Month to date", f"{b['mtd']:+.2%}", f"{'+' if b['mtd'] >= 0 else '−'}${abs(b['mtd']) * amount:,.0f}"),
+        ("Year to date", f"{b['ytd']:+.2%}", f"{'+' if b['ytd'] >= 0 else '−'}${abs(b['ytd']) * amount:,.0f}"),
+        ("Best ETF today", f"{b['asset_ret'].idxmax()} {b['asset_ret'].max():+.2%}", NAMES[b['asset_ret'].idxmax()]),
+        ("Worst ETF today", f"{b['asset_ret'].idxmin()} {b['asset_ret'].min():+.2%}", NAMES[b['asset_ret'].idxmin()]),
+    ])
+    a, bb = st.columns([1.1, 1])
+    with a:
+        title("What drove the day", "contribution of each ETF = weight at the open × ETF move")
+        cs = b["contrib"].sort_values()
+        fig = go.Figure(go.Bar(x=cs.values, y=list(cs.index), orientation="h",
+                               marker_color=[UP if v >= 0 else DOWN for v in cs.values],
+                               text=[f"{v:+.2%}  ({'+' if v >= 0 else '−'}${abs(v) * amount:,.2f})" for v in cs.values],
+                               textposition="outside", textfont=dict(color=INK),
+                               hovertemplate="%{y}: %{x:+.3%}<extra></extra>"))
+        base_layout(fig, 300, legend=False)
+        m = max(abs(cs.min()), abs(cs.max()), 1e-4) * 1.9
+        fig.update_xaxes(tickformat="+.2%", range=[-m, m])
+        fig.update_layout(hovermode="closest", bargap=0.3)
+        fig.add_vline(x=0, line=dict(color=INK3, width=1))
+        show(fig, key="pnl_contrib")
+    with bb:
+        title("Breakdown", f"total {r:+.2%}")
+        t = pd.DataFrame({"Asset": [NAMES[x] for x in b["weights"].index], "Weight": b["weights"].values,
+                          "ETF move": b["asset_ret"].values, "Contribution": b["contrib"].values,
+                          "P&L $": b["contrib"].values * amount}, index=b["weights"].index)
+        t = t.sort_values("Weight", ascending=False)
+        sty = t.style.format({"Weight": "{:.1%}", "ETF move": "{:+.2%}", "Contribution": "{:+.3%}", "P&L $": "{:+,.2f}"})
+        sty = styler_map(sty, color_sign, subset=["ETF move", "Contribution", "P&L $"])
+        table(sty)
+        if b["rebalance_day"] and abs(b["cost"]) > 0:
+            html(f'<div class="note">Trading costs: {-b["cost"]:+.3%} ({-b["cost"] * amount:+,.2f} $)</div>')
+    title("Last 30 trading days", "selected day outlined in amber")
+    wv = b["window"]
+    fig = go.Figure(go.Bar(x=wv.index, y=wv.values, marker_color=[UP if v >= 0 else DOWN for v in wv.values],
+                           marker_line_color=[AMBER if d == b["date"] else "rgba(0,0,0,0)" for d in wv.index],
+                           marker_line_width=[2.5 if d == b["date"] else 0 for d in wv.index],
+                           hovertemplate="%{x|%a %d %b %Y}: %{y:+.2%}<extra></extra>"))
+    base_layout(fig, 250, legend=False, yfmt="+.1%")
+    fig.update_layout(hovermode="closest", bargap=0.25)
+    fig.update_xaxes(type="category", tickvals=list(wv.index[::3]),
+                     ticktext=[d.strftime("%d %b") for d in wv.index[::3]])
+    show(fig, key="pnl_strip")
+    up_days = (wv > 0).sum()
+    html(f'<div class="note">{up_days} of the last {len(wv)} trading days were positive. Prices are daily closes; '
+         f'results are for the model portfolio net of costs. For your own account, multiply shares held by each '
+         f'ETF\'s price change.</div>')
+
 elif page == "DATA":
     title("Price file")
     if have_data:
         raw = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True)
         kpi_row([
-            ("File", os.path.basename(DATA_PATH), HERE[-40:]),
+            ("File", os.path.basename(DATA_PATH), DATA_DIR[-40:]),
             ("Rows", f"{len(raw):,}", "trading days"),
             ("First date", raw.index[0].strftime("%d-%b-%Y"), "raw history"),
             ("Last date", raw.index[-1].strftime("%d-%b-%Y"), "latest close"),
